@@ -62,3 +62,30 @@ Ohne Firebase funktionieren Änderungen nur lokal im Browser. Für öffentliche,
 **Sicherheit:** Die Firebase-Web-Konfiguration ist öffentlich und kein Geheimnis. Sicherheit kommt hier von Firebase Authentication plus den Firestore-Regeln mit der Admin-UID. Füge keine permissiven `allow write: if true`-Regeln hinzu. Der Passwort-Demozugang ist nur auf `localhost` verfügbar und wird auf öffentlichen Hosts nicht akzeptiert. Wenn Firebase noch nicht konfiguriert ist, gibt es keine gemeinsame Speicherung und keinen Admin-Login.
 
 **Medien:** Streams und Einbettungen hängen von den jeweiligen Anbietern ab. HTTPS-Seiten benötigen HTTPS-Medienlinks; HLS-Quellen benötigen gegebenenfalls CORS. Browser können außerdem Autoplay blockieren, bis ein Besucher Play drückt.
+
+## Admin-Konto und Wiederherstellung
+
+Im Studio können angemeldete Administratoren unter **Konto** das Passwort oder die E-Mail ändern. Passwörter benötigen mindestens 12 Zeichen. Jede Änderung verlangt das aktuelle Passwort und beendet alle Sitzungen mit einem neuen Sitzungsstand. Die Zugangsdaten werden als gesalzene `scrypt`-Hashes in einem privaten Vercel-Blob-Datensatz gespeichert; Klartextpasswörter werden nicht gespeichert.
+
+### Notfall-Reset
+
+Setze in den Vercel-Projekteinstellungen für die Produktion oder in einem kontrollierten Wartungsdeploy folgende Umgebungsvariablen:
+
+- `ADMIN_EMAIL`: gewünschte wiederhergestellte E-Mail-Adresse
+- `ADMIN_PASSWORD`: gewünschtes wiederhergestelltes Passwort
+- `ADMIN_RESET_VERSION`: eine neue, eindeutige Versionszeichenfolge
+- `SESSION_SECRET`: bestehendes oder neu erzeugtes Sitzungssigniergeheimnis
+- `BLOB_READ_WRITE_TOKEN`: Zugriffskennwort für den privaten Blob-Speicher
+- `KV_REST_API_URL` und `KV_REST_API_TOKEN` oder `UPSTASH_REDIS_REST_URL` und `UPSTASH_REDIS_REST_TOKEN`: Upstash-Ratenbegrenzung
+
+Beim nächsten Admin-Login vergleicht die Anwendung `ADMIN_RESET_VERSION` mit dem privaten Reset-Stand. Bei Abweichung wird der gespeicherte Datensatz aus `ADMIN_EMAIL` und `ADMIN_PASSWORD` neu erzeugt und alle bisherigen Sitzungen werden ungültig. Verwende danach die aktualisierten Zugangsdaten zum Login.
+
+**Geheimnishygiene:** Lege Werte nur in Vercel-Umgebungsvariablen oder dem lokalen, durch Git ignorierten `.env.local` ab. Teile oder committe `BLOB_READ_WRITE_TOKEN`, `SESSION_SECRET`, `ADMIN_PASSWORD`, Redis-Tokens oder `ADMIN_RESET_VERSION` nicht. Der Reset erzwingt keinen Versand einer Wiederherstellungs-E-Mail; bewahre für den Notfall einen sicheren Offline-Zugang zu den Vercel- und Admin-Einstellungen auf.
+
+## Lokale Prüfung
+
+```bash
+npm test
+npm run check
+npm audit --omit=dev
+```

@@ -4,7 +4,8 @@
   "description": "<!-- omgithub:readme:start --> ## 🚀 Build, play, and remix with OMGithub",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/*.test.js",
+    "check": "node --check api/admin/store.js && node --check api/admin/session.js && node --check api/admin/change-password.js && node --check api/admin/change-email.js && node --check api/admin/rate-limit.js"
   },
   "repository": {
     "type": "git",
@@ -19,6 +20,7 @@
   },
   "homepage": "https://github.com/yazeedmustafa57-bit/RadioTV2028#readme",
   "dependencies": {
-    "@vercel/blob": "^2.9.0"
+    "@upstash/redis": "^1.41.0",
+    "@vercel/blob": "2.4.0"
   }
 }

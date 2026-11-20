@@ -87,40 +87,32 @@ function parseJson(raw) {
 
 async function credentialState() {
   const envReset = String(process.env.ADMIN_RESET_VERSION || '');
-  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) return null;
-
-  if (!blobConfigAvailable()) {
-    return {
-      email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
-      password: process.env.ADMIN_PASSWORD,
-      passwordHash: null,
-      reset: envReset,
-      sessionVersion: 0,
-    };
-  }
+  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET || !blobConfigAvailable()) return null;
 
   const resetRaw = await blobGet(RESET_PATH);
   const resetState = parseJson(resetRaw)?.reset;
   const credentialsRaw = await blobGet(CREDENTIAL_PATH);
   const parsed = parseJson(credentialsRaw);
 
-  if (resetState !== envReset || !parsed) {
+  if (resetState === envReset && parsed && typeof parsed.passwordHash === 'string') {
     return {
-      email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
-      password: process.env.ADMIN_PASSWORD,
-      passwordHash: null,
+      email: String(parsed.email || '').trim().toLowerCase(),
+      passwordHash: parsed.passwordHash,
+      password: null,
       reset: envReset,
-      sessionVersion: 0,
+      sessionVersion: Number.isInteger(parsed.sessionVersion) ? parsed.sessionVersion : 0,
     };
   }
 
-  return {
-    email: String(parsed.email || '').trim().toLowerCase(),
-    passwordHash: parsed.passwordHash,
+  const initialState = {
+    email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
+    passwordHash: scryptHash(process.env.ADMIN_PASSWORD),
     password: null,
     reset: envReset,
-    sessionVersion: Number.isInteger(parsed.sessionVersion) ? parsed.sessionVersion : 0,
+    sessionVersion: parsed && Number.isInteger(parsed.sessionVersion) ? parsed.sessionVersion + 1 : 0,
   };
+  await saveBlobCredentials(initialState);
+  return initialState;
 }
 
 async function verifyPassword(password, state) {
@@ -142,12 +134,16 @@ async function validSession(req, secret, state) {
 }
 
 async function saveBlobCredentials(state) {
-  await blobSet(RESET_PATH, { reset: String(process.env.ADMIN_RESET_VERSION || '') });
+  const reset = String(process.env.ADMIN_RESET_VERSION || '');
+  // Credential writes must remain atomic from the caller's perspective: publish
+  // credentials first, then mark the reset version. The mismatch is deliberately
+  // detected by credentialState(), which performs the emergency re-seed.
   await blobSet(CREDENTIAL_PATH, {
     email: state.email,
     passwordHash: state.passwordHash,
     sessionVersion: state.sessionVersion,
   });
+  await blobSet(RESET_PATH, { reset });
 }
 
 async function ensureResetSeed(state) {
