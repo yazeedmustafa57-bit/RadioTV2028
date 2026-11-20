@@ -87,11 +87,37 @@ function parseJson(raw) {
 
 async function credentialState() {
   const envReset = String(process.env.ADMIN_RESET_VERSION || '');
-  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET || !blobConfigAvailable()) return null;
+  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) return null;
 
-  const resetRaw = await blobGet(RESET_PATH);
+  // Login and signed sessions must remain independent of persistent storage.
+  // If Blob is missing or unavailable, credentials come exclusively from env vars.
+  if (!blobConfigAvailable()) {
+    return {
+      email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
+      passwordHash: null,
+      password: process.env.ADMIN_PASSWORD,
+      reset: envReset,
+      sessionVersion: 0,
+      storageAvailable: false,
+    };
+  }
+
+  let resetRaw;
+  let credentialsRaw;
+  try {
+    resetRaw = await blobGet(RESET_PATH);
+    credentialsRaw = await blobGet(CREDENTIAL_PATH);
+  } catch {
+    return {
+      email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
+      passwordHash: null,
+      password: process.env.ADMIN_PASSWORD,
+      reset: envReset,
+      sessionVersion: 0,
+      storageAvailable: false,
+    };
+  }
   const resetState = parseJson(resetRaw)?.reset;
-  const credentialsRaw = await blobGet(CREDENTIAL_PATH);
   const parsed = parseJson(credentialsRaw);
 
   if (resetState === envReset && parsed && typeof parsed.passwordHash === 'string') {
@@ -101,6 +127,7 @@ async function credentialState() {
       password: null,
       reset: envReset,
       sessionVersion: Number.isInteger(parsed.sessionVersion) ? parsed.sessionVersion : 0,
+      storageAvailable: true,
     };
   }
 
@@ -111,7 +138,19 @@ async function credentialState() {
     reset: envReset,
     sessionVersion: parsed && Number.isInteger(parsed.sessionVersion) ? parsed.sessionVersion + 1 : 0,
   };
-  await saveBlobCredentials(initialState);
+  try {
+    await saveBlobCredentials(initialState);
+  } catch {
+    return {
+      email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
+      passwordHash: null,
+      password: process.env.ADMIN_PASSWORD,
+      reset: envReset,
+      sessionVersion: 0,
+      storageAvailable: false,
+    };
+  }
+  initialState.storageAvailable = true;
   return initialState;
 }
 

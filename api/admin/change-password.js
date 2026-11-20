@@ -25,7 +25,10 @@ module.exports = async function handler(req, res) {
   if (!rate) return;
 
   let state;
-  try { state = await store.credentialState(); } catch { return store.reply(res, 503, { ok: false, error: 'Speicher nicht verfügbar.' }); }
+  try { state = await store.credentialState(); } catch { return store.reply(res, 503, { ok: false, error: 'Speicher noch nicht eingerichtet.' }); }
+  if (!state || state.storageAvailable === false || !store.blobConfigAvailable()) {
+    return store.reply(res, 503, { ok: false, error: 'Speicher noch nicht eingerichtet.' });
+  }
   const secret = process.env.SESSION_SECRET;
   if (!state || !secret) return store.reply(res, 503, { ok: false, error: 'Admin-Anmeldung ist nicht konfiguriert.' });
   if (!(await store.validSession(req, secret, state))) return fail(req, res, 401, 'Sitzung abgelaufen oder ungültig. Bitte neu anmelden.');

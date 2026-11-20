@@ -26,14 +26,31 @@ function clientKey(req, action) {
   return `novalive:admin:rate:${action}:${digest}`;
 }
 
+const memoryAttempts = new Map();
+
 async function consume(req, action) {
   const key = clientKey(req, action);
-  const count = Number(await redisClient().eval(script, [key], [String(WINDOW_SECONDS)]));
-  return { allowed: Number.isSafeInteger(count) && count <= MAX_ATTEMPTS, key };
+  try {
+    const count = Number(await redisClient().eval(script, [key], [String(WINDOW_SECONDS)]));
+    return { allowed: Number.isSafeInteger(count) && count <= MAX_ATTEMPTS, key };
+  } catch {
+    const now = Date.now();
+    let entry = memoryAttempts.get(key);
+    if (!entry || entry.resetAt <= now) entry = { count: 0, resetAt: now + WINDOW_SECONDS * 1000 };
+    entry.count += 1;
+    memoryAttempts.set(key, entry);
+    if (memoryAttempts.size > 10000) {
+      for (const [oldKey, oldEntry] of memoryAttempts) {
+        if (oldEntry.resetAt <= now) memoryAttempts.delete(oldKey);
+      }
+    }
+    return { allowed: entry.count <= MAX_ATTEMPTS, key };
+  }
 }
 
 async function clear(key) {
-  await redisClient().del(key);
+  memoryAttempts.delete(key);
+  try { await redisClient().del(key); } catch {}
 }
 
 async function enforce(req, res, action) {
