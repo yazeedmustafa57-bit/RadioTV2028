@@ -1,55 +1,41 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { get, put } = require('@vercel/blob');
 
 const COOKIE = '__Host-novalive_admin';
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
+const CREDENTIAL_PATH = 'novalive/admin/credentials.json';
+const RESET_PATH = 'novalive/admin/reset-version.json';
 
-function redisConfig() {
-  const url = process.env.REDIS_URL || process.env.KV_REST_API_URL;
-  if (!url) return null;
-  if (process.env.KV_REST_API_URL) {
-    return {
-      kind: 'rest',
-      url: process.env.KV_REST_API_URL,
-      token: process.env.KV_REST_API_TOKEN,
-    };
-  }
-  return { kind: 'url', url };
+function blobConfigAvailable() {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
-async function redisGet(key) {
-  const c = redisConfig();
-  if (!c) return null;
-  if (c.kind === 'rest') {
-    if (!c.token) throw new Error('Redis-Konfiguration unvollständig');
-    const r = await fetch(`${c.url.replace(/\/$/, '')}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${c.token}` },
-      cache: 'no-store',
+async function blobGet(pathname) {
+  if (!blobConfigAvailable()) throw new Error('Blob-Konfiguration fehlt');
+  try {
+    const blob = await get(pathname, {
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+      useCache: false,
     });
-    if (!r.ok) throw new Error('Redis nicht erreichbar');
-    const d = await r.json();
-    return d.result == null ? null : d.result;
+    if (!blob) return null;
+    return await blob.text();
+  } catch (error) {
+    if (error?.name === 'BlobNotFoundError' || /not found|404/i.test(error?.message || '') || error?.statusCode === 404) return null;
+    throw error;
   }
-  const r = await fetch('/noop', { cache: 'no-store' }).catch(() => null);
-  void r;
-  throw new Error('Für REDIS_URL wird ein Redis-REST-Adapter benötigt');
 }
 
-async function redisSet(key, value) {
-  const c = redisConfig();
-  if (!c) throw new Error('Redis ist nicht konfiguriert');
-  if (c.kind === 'rest') {
-    if (!c.token) throw new Error('Redis-Konfiguration unvollständig');
-    const r = await fetch(`${c.url.replace(/\/$/, '')}/set/${encodeURIComponent(key)}/${encodeURIComponent(JSON.stringify(value))}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${c.token}` },
-      cache: 'no-store',
-    });
-    if (!r.ok) throw new Error('Redis-Schreiben fehlgeschlagen');
-  } else {
-    throw new Error('Für REDIS_URL wird ein Redis-REST-Adapter benötigt');
-  }
+async function blobSet(pathname, value) {
+  if (!blobConfigAvailable()) throw new Error('Blob-Konfiguration fehlt');
+  await put(pathname, JSON.stringify(value), {
+    access: 'private',
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+    contentType: 'application/json',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+  });
 }
 
 function reply(res, status, body, extraHeaders = {}) {
@@ -91,15 +77,19 @@ function verifyScrypt(password, encoded) {
     const actual = crypto.scryptSync(password, parts[1], 64);
     const expected = Buffer.from(parts[2], 'base64');
     return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
-  } catch {
-    return false;
-  }
+  } catch { return false; }
+}
+
+function parseJson(raw) {
+  if (raw == null) return null;
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return null; }
 }
 
 async function credentialState() {
   const envReset = String(process.env.ADMIN_RESET_VERSION || '');
-  if (!redisConfig()) {
-    if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) return null;
+  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) return null;
+
+  if (!blobConfigAvailable()) {
     return {
       email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
       password: process.env.ADMIN_PASSWORD,
@@ -108,10 +98,13 @@ async function credentialState() {
       sessionVersion: 0,
     };
   }
-  const state = await redisGet('novalive:admin:credentials');
-  const resetState = await redisGet('novalive:admin:reset-version').catch(() => null);
-  if (!state || resetState !== envReset) {
-    if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) return null;
+
+  const resetRaw = await blobGet(RESET_PATH);
+  const resetState = parseJson(resetRaw)?.reset;
+  const credentialsRaw = await blobGet(CREDENTIAL_PATH);
+  const parsed = parseJson(credentialsRaw);
+
+  if (resetState !== envReset || !parsed) {
     return {
       email: process.env.ADMIN_EMAIL.trim().toLowerCase(),
       password: process.env.ADMIN_PASSWORD,
@@ -120,8 +113,7 @@ async function credentialState() {
       sessionVersion: 0,
     };
   }
-  let parsed;
-  try { parsed = typeof state === 'string' ? JSON.parse(state) : state; } catch { return null; }
+
   return {
     email: String(parsed.email || '').trim().toLowerCase(),
     passwordHash: parsed.passwordHash,
@@ -149,10 +141,9 @@ async function validSession(req, secret, state) {
   } catch { return false; }
 }
 
-async function saveRedisCredentials(state) {
-  const nextReset = String(process.env.ADMIN_RESET_VERSION || '');
-  await redisSet('novalive:admin:reset-version', nextReset);
-  await redisSet('novalive:admin:credentials', {
+async function saveBlobCredentials(state) {
+  await blobSet(RESET_PATH, { reset: String(process.env.ADMIN_RESET_VERSION || '') });
+  await blobSet(CREDENTIAL_PATH, {
     email: state.email,
     passwordHash: state.passwordHash,
     sessionVersion: state.sessionVersion,
@@ -160,10 +151,12 @@ async function saveRedisCredentials(state) {
 }
 
 async function ensureResetSeed(state) {
-  if (!redisConfig()) return;
-  const resetState = await redisGet('novalive:admin:reset-version').catch(() => null);
-  if (resetState === state.reset && await redisGet('novalive:admin:credentials').catch(() => null)) return;
-  await redisSet('novalive:admin:reset-version', state.reset);
+  if (!blobConfigAvailable()) return;
+  const resetRaw = await blobGet(RESET_PATH);
+  const resetState = parseJson(resetRaw)?.reset;
+  const credentialsRaw = await blobGet(CREDENTIAL_PATH);
+  if (resetState === state.reset && credentialsRaw) return;
+  await blobSet(RESET_PATH, { reset: state.reset });
 }
 
-module.exports = { COOKIE, SESSION_TTL_SECONDS, reply, safeEqual, sign, getCookie, scryptHash, verifyScrypt, credentialState, verifyPassword, validSession, saveRedisCredentials, ensureResetSeed, redisConfig };
+module.exports = { COOKIE, SESSION_TTL_SECONDS, reply, safeEqual, sign, getCookie, scryptHash, verifyScrypt, credentialState, verifyPassword, validSession, saveBlobCredentials, ensureResetSeed, blobConfigAvailable, blobGet, blobSet };

@@ -7,7 +7,7 @@ module.exports = async function handler(req, res) {
   const secret = process.env.SESSION_SECRET;
   let state;
   try { state = await store.credentialState(); }
-  catch (e) { return store.reply(res, 503, { ok: false, error: 'Redis-Verbindung nicht verfügbar.' }); }
+  catch (e) { return store.reply(res, 503, { ok: false, error: 'Privater Blob-Speicher ist nicht verfügbar.' }); }
   if (!state || !secret) return store.reply(res, 503, { ok: false, error: 'Admin-Anmeldung ist nicht konfiguriert.' });
 
   if (req.method === 'GET') {

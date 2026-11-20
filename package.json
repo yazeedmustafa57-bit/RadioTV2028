@@ -1,0 +1,24 @@
+{
+  "name": "radiotv2028",
+  "version": "1.0.0",
+  "description": "<!-- omgithub:readme:start --> ## 🚀 Build, play, and remix with OMGithub",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yazeedmustafa57-bit/RadioTV2028.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/yazeedmustafa57-bit/RadioTV2028/issues"
+  },
+  "homepage": "https://github.com/yazeedmustafa57-bit/RadioTV2028#readme",
+  "dependencies": {
+    "@vercel/blob": "^2.9.0"
+  }
+}
