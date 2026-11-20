@@ -36,6 +36,11 @@ Ohne Firebase funktionieren Änderungen nur lokal im Browser. Für öffentliche,
          allow create, update, delete: if request.auth != null
            && request.auth.uid == 'ADMIN_UID_HIER_EINTRAGEN';
        }
+       match /site/live {
+         allow read: if true;
+         allow create, update, delete: if request.auth != null
+           && request.auth.uid == 'ADMIN_UID_HIER_EINTRAGEN';
+       }
      }
    }
    ```
